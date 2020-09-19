@@ -1,5 +1,6 @@
-import React from 'react'
+import React, { useState } from 'react'
 import ReactDOM from 'react-dom'
+import io from 'socket.io-client'
 import './index.css'
 
 function Square(props) {
@@ -11,6 +12,36 @@ function Square(props) {
         {props.value}
       </button>
     );
+}
+
+function GameIdInput(props) {
+  const [inputId, setInputId] = useState(props.gameId)
+  function handleChange(e) {
+    setInputId(e.target.value)
+  }
+  return (
+  <div className="game-settings">
+    <input 
+      className="game-id-input"
+      onChange={handleChange}
+      type="text"
+      placeholder={props.gameId != null ?  props.gameId : "Game ID"}
+    />
+    <button
+      className="nice-button"
+      disabled={inputId == null || inputId == ''}
+      onClick={() => props.joinGame(inputId)}
+    >
+        Join Game
+    </button>
+    <button
+      className="nice-button"
+      onClick={props.startGame}
+    >
+        Start New Game
+    </button>
+  </div>
+  )
 }
 
 class Board extends React.Component {
@@ -37,7 +68,7 @@ class Board extends React.Component {
     let rows = []
     for (let row=0; row<9; row+=3) {
       rows.push(
-        <div className="board-row">
+        <div key={row} className="board-row">
           {this.renderSquare(row)}
           {this.renderSquare(row+1)}
           {this.renderSquare(row+2)}
@@ -58,57 +89,112 @@ class Game extends React.Component {
   constructor(props) {
     super(props)
     this.state = {
-      history: [{
-        squares: Array(9).fill(null),
-        position: null
-      }],
-      xNext: true,
-      stepNumber: 0,
+      squares: Array(9).fill(null),
+      history: [{}],
+      player: 'X',
+      currentTurn: 'X',
+      gameId: null,
+      socket: null,
     }
   }
 
-  handleClick(i) {
-    const history = this.state.history.slice(0, this.state.stepNumber + 1)
-    const current = history[history.length - 1]
-    const squares = current.squares.slice()
-    if (calculateWinner(squares) || squares[i]) {
+  componentDidMount() {
+    const socket = io("http://localhost:5000/")
+    socket.on("error", (error) => {
+      console.log('Connection Error: ');
+    })
+    socket.on("connect", (error) => {
+      console.log('WebSocket Client Connected');
+      this.setState({socket: socket})
+    })
+    socket.on("disconnect", (error) => {
+      console.log('WebSocket Client Connected');
+      this.setState({socket: socket})
+    })
+    socket.on('start_game', (data) => {
+      console.log(data)
+      this.setState({
+        player: data.player,
+        currentTurn: data.turn,
+        gameId: data.game_id,
+        squares: Array(9).fill(null),
+        history: [{}]
+      })
+    })
+    socket.on('join_game_success', (data) => {
+      console.log(data)
+      this.setState({
+        player: data.player,
+        currentTurn: data.turn,
+        gameId: data.game_id,
+        squares: data.board,
+        history: data.history,
+      })
+    })
+    socket.on('new_move', (data) => {
+      console.log(data)
+      this.setState({
+        squares: data.board,
+        currentTurn: data.turn,
+        history: data.history,
+      })
+    })
+  }
+
+  onSocketClose(e) {
+    this.setState({
+      socket: null
+    })
+    console.log('WebSocket Closed');
+  }
+
+  handleClick = (i) => {
+    let history = this.state.history.slice()
+    const squares = this.state.squares.slice()
+    console.log(squares)
+    console.log(this.state.currentTurn)
+    console.log(this.state.player)
+    console.log(calculateWinner(squares))
+    console.log(squares[i])
+    if (calculateWinner(squares) || squares[i] || this.state.currentTurn !== this.state.player) {
       return
     }
-    squares[i] = this.state.xNext ? 'X' : 'O'
+    history = history.concat([{square: i, player: this.state.player}])
+    squares[i] = this.state.player
     this.setState({
-      history: history.concat([{
-          squares: squares,
-          position: i,
-        }]),
-      xNext: !this.state.xNext,
-      stepNumber: history.length,
+      history: history,
+      squares: squares
     })
+    this.state.socket.emit('new_move', {board: squares, history: history, id: this.state.gameId, player: this.state.player})
   }
 
-  jumpTo(step) {
-    this.setState({
-      stepNumber: step,
-      xNext: (step % 2) === 0,
-    })
+  
+  startGame = () => {
+    console.log(`Start Game`)
+    this.state.socket.emit('start_game', {})
+  }
+
+  joinGame = (id) => {
+    console.log(`Join Game with ${id}`)
+    this.state.socket.emit('join_game', {id: id})
   }
 
   render() {
     const history = this.state.history
-    const current = history[this.state.stepNumber]
-    const squares = current.squares.slice()
+    const squares = this.state.squares
     const winner = calculateWinner(squares)
-    const moves = history.map((step, move) => {
+    const moves = history.map((moveInfo, moveNo) => {
       let moveText;
-      if (move) {
-        const coords = `(${step.position % 3 + 1},${Math.floor(step.position / 3) + 1})`
-        const player = step.squares[step.position]
-        moveText = `Go to move ${move}: ${player} -> ${coords}`
+      if (moveNo) {
+        const coords = `(${moveInfo.square % 3 + 1},${Math.floor(moveInfo.square / 3) + 1})`
+        const player = moveInfo.player
+        moveText = `${player} -> ${coords}`
       } else {
-        moveText = 'Go to start of game (or Restart)'
+        moveText = 'Beginning'
       }
       return (
-        <li key={move}>
-          <button onClick={() => this.jumpTo(move)}>{moveText}</button>
+        <li key={moveNo}>
+          <p>{moveText}</p>
         </li>
       )
     })
@@ -117,28 +203,60 @@ class Game extends React.Component {
     if (winner) {
       status = `${winner[0]} has won!`
       winningSquares = winner[1]
-    } else if (this.state.stepNumber >= 9) {
+    } else if (history.length >= 10) {
       status = "It's a Draw!"
     } else {
-      status = `Next player: ${this.state.xNext ? 'X' : 'O'}`;
+      status = `Next player: ${this.state.currentTurn}`;
     }
 
     return (
-      <div className="game">
-        <div className="game-status">{status}</div>
-        <div className="game-board">
-          <Board 
-            squares={current.squares}
-            onClick={(i) => this.handleClick(i)}
-            winningSquares={winningSquares}/>
+      this.state.socket ? (
+        <div className="game">
+          <GameIdInput
+            gameId={this.state.gameId}
+            joinGame={this.joinGame}
+            startGame={this.startGame}
+          />
+            <ActiveGameBoard
+            gameId={this.state.gameId}
+            status={status}
+            squares={squares}
+            handleClick={this.handleClick}
+            winningSquares={winningSquares}
+            moves={moves}
+            mySymbol={this.state.player}
+            /> 
         </div>
-        <div className="game-info">
-          <p>History</p>
-          <ol>{moves}</ol>
-        </div>
-      </div>
+      )
+      : (
+        <p>
+          Can't connect to the server!
+        </p>
+      )
     );
   }
+}
+
+function ActiveGameBoard(props) {
+  if (props.gameId == null) {
+    return null
+  }
+  return (
+    <div className="active-game">
+      <p className="game-status">You are playing as {props.mySymbol}</p>
+      <p className="game-status">{props.status}</p>
+        <div className="game-board">
+          <Board 
+            squares={props.squares}
+            onClick={(i) => props.handleClick(i)}
+            winningSquares={props.winningSquares}/>
+        </div>
+        <div className="game-info">
+          <p>Game History</p>
+          <ol>{props.moves}</ol>
+        </div>
+    </div>
+  )
 }
 
 function calculateWinner(squares) {

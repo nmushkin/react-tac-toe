@@ -9,10 +9,6 @@ ol, ul {
   margin: 0;
 }
 
-li {
-  padding: 5px;
-}
-
 .board-row:after {
   clear: both;
   content: "";
@@ -23,11 +19,27 @@ li {
   min-width: 150px;
 }
 
-.game-status {
-  display: block;
-  padding: 20px;
-  margin-bottom: 10px;
+.game-settings {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
 }
+
+.game-id-input {
+  text-align: center;
+  line-height: 1.2em;
+  font-size: 1.2em;
+  margin: 5px;
+}
+
+.nice-button {
+  text-align: center;
+  line-height: 1.2em;
+  font-size: 1.2em;
+  margin: 5px;
+}
+
+
 
 .square {
   background: #fff;
